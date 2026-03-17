@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: medguard-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./database/data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: medguard
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
