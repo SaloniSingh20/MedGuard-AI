@@ -2,7 +2,7 @@
 
 **AI-Powered Fake Medicine Detection & Drug Authentication Platform**
 
-## Features
+## 🚀 Features
 - AI packaging analysis (real GitHub datasets)
 - Blockchain batch authentication
 - QR code verification
@@ -10,14 +10,14 @@
 - Real-time scan logs and analytics
 - Admin dashboard
 
-## Tech Stack
+## 🖥️ Tech Stack
 - Frontend: Next.js, TailwindCSS, Framer Motion
 - Backend: Node.js, Express.js
 - Database: MongoDB
 - AI Microservice: Python FastAPI, TensorFlow/PyTorch, OpenCV
 - Blockchain: Hardhat + Solidity
 
-## Project Structure
+## 📁 Project Structure
 ```
 medguard-ai/
   frontend/
@@ -32,7 +32,7 @@ medguard-ai/
     ...
 ```
 
-## Setup Instructions
+## ⚡ Setup Instructions
 1. Start MongoDB:
    ```bash
    docker compose -f database/docker-compose.yml up -d
@@ -56,10 +56,10 @@ medguard-ai/
    npm run dev
    ```
 
-## Demo Workflow
+## 🧪 Demo Workflow
 - Scan medicine → AI analyzes packaging → Blockchain verifies batch → Authenticity score displayed → Verification logged → User reports counterfeit
 
-## GitHub Data Integration
+## 📊 GitHub Data Integration
 - Uses real datasets from:
   - ageron/handson-ml2
   - ardamavi/Sign-Language-Digits-Dataset
@@ -67,10 +67,14 @@ medguard-ai/
   - kaggle/kaggle-api
   - ieee8023/medical-imaging-datasets
 
-## Deployment
+## 🌐 Deployment
 - Frontend: Vercel
 - Backend: Render
 - AI Service: Docker/VPS
 
-## License
+## 📜 License
 MIT
+
+---
+
+> MedGuard AI is a premium, modern healthcare platform for real-time medicine authentication and safety. All UI is glassmorphic, animated, and mobile-first. For issues or contributions, open a PR or contact SaloniSingh20.
