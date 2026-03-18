@@ -32,7 +32,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "3003:3000"
     depends_on:
       - backend
       - ai-service
