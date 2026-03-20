@@ -163,13 +163,6 @@ Contributions are welcome!
 
 ---
 
-## 👩‍💻 Author
-
-**Saloni Singh**
-🔗 GitHub: https://github.com/SaloniSingh20
-
----
-
 ## 💡 Vision
 
 MedGuard AI aims to eliminate counterfeit medicines globally by combining
