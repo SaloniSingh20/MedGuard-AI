@@ -1,173 +1,166 @@
-# 🛡️ MedGuard AI
+# MedGuard AI
 
-### AI-Powered Fake Medicine Detection & Drug Authentication Platform
+AI-powered medicine verification platform that combines OCR + LLM analysis + blockchain-backed history to classify scans into:
 
-MedGuard AI is a **next-generation healthcare safety platform** that detects counterfeit medicines using **Artificial Intelligence + Blockchain verification**.
-It provides **real-time scanning, authentication, and reporting**, ensuring safer pharmaceutical consumption.
+- Authentic
+- Suspicious
+- Counterfeit
 
----
+## What It Does
 
-## 🚀 Features
+- Scans medicine package images from the web UI.
+- Extracts text using OCR.
+- Runs AI verification on extracted packaging content.
+- Fuses AI signals with blockchain/history evidence for final classification.
+- Stores verification logs and analysis details in MongoDB.
+- Provides dashboard metrics for analytics, alerts, and training telemetry.
 
-* 🧠 **AI Packaging Analysis**
-  Detects fake medicines using trained models on real-world datasets.
+## Current Classification Logic
 
-* ⛓️ **Blockchain Batch Authentication**
-  Verifies drug batches securely using smart contracts.
+The backend classifies each scan into `authentic`, `suspicious`, or `counterfeit` using:
 
-* 🔍 **QR Code Verification**
-  Instantly validate medicine authenticity via QR scanning.
+1. AI signals
+- Model status and confidence
+- AI reason and detected issues
 
-* 🚨 **Consumer Counterfeit Reporting**
-  Users can report suspicious medicines to improve detection systems.
+2. OCR quality/content signals
+- Presence of batch/lot identifiers
+- Presence of mfg/exp date markers
+- Presence of dosage/composition keywords
+- Presence of manufacturer/company terms
 
-* 📊 **Real-Time Analytics Dashboard**
-  Tracks scan history, fraud detection rates, and system insights.
+3. Blockchain/history fusion
+- Prior verdict consistency for the same batch
+- Counterfeit-safe history signals
+- Severity gating (tamper/forged/invalid-QR style indicators)
 
-* 🛠️ **Admin Dashboard**
-  Full control over monitoring, alerts, and dataset updates.
+Final result is a fused status with calibrated confidence.
 
----
+## Result Page Behavior
 
-## 🖥️ Tech Stack
+- Shows verification result gauge and confidence.
+- Shows AI reason and detected issues.
+- Supply chain timeline is intentionally hidden from the result page output flow.
 
-### Frontend
+## Repository Structure
 
-* ⚡ Next.js
-* 🎨 TailwindCSS
-* 🎬 Framer Motion
-
-### Backend
-
-* 🟢 Node.js
-* 🚀 Express.js
-
-### Database
-
-* 🍃 MongoDB
-
-### AI Microservice
-
-* 🐍 Python (FastAPI)
-* 🤖 TensorFlow / PyTorch
-* 👁️ OpenCV
-
-### Blockchain
-
-* 🔗 Hardhat
-* 📜 Solidity
-
----
-
-## 📁 Project Structure
-
-```
+```text
 medguard-ai/
-│
-├── frontend/        # Next.js frontend (UI + dashboard)
-├── backend/         # Express API server
-├── ai-service/      # AI model + inference service
-├── blockchain/      # Smart contracts & scripts
-├── database/        # MongoDB + Docker setup
+  ai-service/
+    data/
+    scripts/
+    main.py
+    train_model.py
+  backend/
+    services/
+    server.js
+    model.js
+  frontend/
+    app/
+    components/
+  blockchain/
+  database/
+  docker-compose.yml
 ```
 
----
+## Prerequisites
 
-## ⚡ Setup Instructions
+- Node.js 18+
+- Python 3.10+
+- MongoDB (local or Docker)
+- Ollama running locally (default: http://localhost:11434)
 
-### 1️⃣ Start Database (MongoDB)
+## Setup
+
+### 1) Install dependencies
+
+Root:
+
+```bash
+npm install
+```
+
+Backend:
+
+```bash
+cd backend
+npm install
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+```
+
+AI service:
+
+```bash
+cd ai-service
+pip install -r requirements.txt
+```
+
+### 2) Start MongoDB
 
 ```bash
 docker compose -f database/docker-compose.yml up -d
 ```
 
-### 2️⃣ Start Backend
+### 3) Start services
+
+From root:
 
 ```bash
-cd backend
-npm install
 npm run dev
 ```
 
-### 3️⃣ Start AI Service
+This runs:
 
-```bash
-cd ai-service
-pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+- Backend on port 5000
+- Frontend on port 3000
+- AI service on port 8000
+
+## Environment Variables
+
+Backend (`backend/.env`):
+
+```env
+PORT=5000
+MONGODB_URI=mongodb://127.0.0.1:27017/medguard
+OLLAMA_URL=http://localhost:11434/api/generate
+OLLAMA_MODEL=llama3
 ```
 
-### 4️⃣ Start Frontend
+## Key API Endpoints
+
+- `POST /api/verify-image` -> verify uploaded medicine image
+- `GET /api/verifications/:id` -> verification + AI reasoning
+- `GET /api/admin/training-metrics` -> dynamic training pipeline metrics
+- `POST /api/admin/datasets/ingest` -> ingest GitHub/Kaggle dataset sources
+- `GET /api/alerts` -> alerts + summary
+- `GET /api/admin/analytics` -> analytics distributions
+- `GET /api/settings`, `PUT /api/settings` -> settings persistence
+
+## Dataset Ingestion
+
+Dataset ingestion script:
+
+- `ai-service/scripts/ingest-datasets.mjs`
+
+It pulls configured GitHub sources, writes Kaggle-seed records, and generates augmented records used in training telemetry.
+
+Manual ingestion trigger:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+curl -X POST http://localhost:5000/api/admin/datasets/ingest
 ```
 
----
+## Notes
 
-## 🧪 Demo Workflow
+- If scans keep returning suspicious for clean packages, verify image quality and packaging completeness (batch/manufacturer/exp fields visible).
+- For best results, upload clear front/back packaging photos with readable text.
 
-1. 📸 Upload or capture medicine image
-2. 🧠 AI analyzes packaging
-3. ⛓️ Blockchain verifies batch authenticity
-4. 📊 Authenticity score is generated
-5. 📝 Result is logged in system
-6. 🚨 User can report counterfeit if detected
+## License
 
----
-
-## 📊 GitHub Dataset Integration
-
-MedGuard AI leverages real-world datasets for training and validation:
-
-* 🔗 https://github.com/ageron/handson-ml2
-* 🔗 https://github.com/ardamavi/Sign-Language-Digits-Dataset
-* 🔗 https://github.com/soumith/imagenetloader.torch
-* 🔗 https://github.com/Kaggle/kaggle-api
-* 🔗 https://github.com/ieee8023/medical-imaging-datasets
-
----
-
-## 🌐 Deployment
-
-* 🌍 **Frontend** → Vercel
-* ⚙️ **Backend** → Render
-* 🤖 **AI Service** → Docker / VPS
-
----
-
-## 📸 UI Highlights
-
-* ✨ Glassmorphic design
-* 🌙 Dark/Light mode support
-* ⚡ Fully responsive & mobile-first
-* 🎬 Smooth animations with Framer Motion
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome!
-
-* Fork the repository
-* Create a new branch
-* Submit a Pull Request
-
----
-
-## 💡 Vision
-
-MedGuard AI aims to eliminate counterfeit medicines globally by combining
-**AI intelligence + Blockchain trust**, making healthcare safer and smarter.
-
----
-
-⭐ *If you found this project useful, please consider giving it a star!*
+MIT
