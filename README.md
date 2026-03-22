@@ -1,46 +1,81 @@
 # MedGuard AI
 
-AI-powered medicine verification platform that combines OCR + LLM analysis + blockchain-backed history to classify scans into:
+AI-powered medicine verification platform that combines **OCR + LLM analysis + blockchain-backed history** to classify scans into:
 
-- Authentic
-- Suspicious
-- Counterfeit
+* Authentic
+* Suspicious
+* Counterfeit
+
+---
 
 ## What It Does
 
-- Scans medicine package images from the web UI.
-- Extracts text using OCR.
-- Runs AI verification on extracted packaging content.
-- Fuses AI signals with blockchain/history evidence for final classification.
-- Stores verification logs and analysis details in MongoDB.
-- Provides dashboard metrics for analytics, alerts, and training telemetry.
+* Scans medicine package images from the web UI.
+* Extracts text using OCR (Tesseract).
+* Runs AI verification using LLaMA 3 (via Ollama).
+* Fuses AI signals with blockchain/history evidence for final classification.
+* Stores verification logs and analysis details in MongoDB.
+* Provides dashboard metrics for analytics, alerts, and monitoring.
+
+---
 
 ## Current Classification Logic
 
 The backend classifies each scan into `authentic`, `suspicious`, or `counterfeit` using:
 
-1. AI signals
-- Model status and confidence
-- AI reason and detected issues
+### 1. AI Signals
 
-2. OCR quality/content signals
-- Presence of batch/lot identifiers
-- Presence of mfg/exp date markers
-- Presence of dosage/composition keywords
-- Presence of manufacturer/company terms
+* Model classification (SAFE / SUSPICIOUS / FAKE)
+* Confidence score
+* AI reasoning
+* Detected anomalies
 
-3. Blockchain/history fusion
-- Prior verdict consistency for the same batch
-- Counterfeit-safe history signals
-- Severity gating (tamper/forged/invalid-QR style indicators)
+### 2. OCR Quality / Content Signals
 
-Final result is a fused status with calibrated confidence.
+* Presence of batch / lot identifiers
+* Presence of manufacturing & expiry dates
+* Presence of dosage / composition keywords
+* Manufacturer / company detection
+* Missing or malformed packaging fields
+
+### 3. Blockchain / History Fusion
+
+* Prior verdict consistency for the same batch
+* Duplicate or anomaly patterns
+* Suspicious verification frequency
+* Severity gating (tamper / forged / invalid signals)
+
+➡️ Final output is a **fused classification with calibrated confidence**
+
+---
 
 ## Result Page Behavior
 
-- Shows verification result gauge and confidence.
-- Shows AI reason and detected issues.
-- Supply chain timeline is intentionally hidden from the result page output flow.
+* Displays verification result (Authentic / Suspicious / Counterfeit)
+* Shows confidence score (visual + numeric)
+* Displays AI reasoning and detected issues
+* Keeps supply chain timeline hidden from result output flow
+
+---
+
+## Datasets Used
+
+The system leverages multiple datasets for enrichment, validation, and AI reasoning support:
+
+* https://raw.githubusercontent.com/mahfuj-m/Medicine-s-Dataset/master/medicine.csv
+* https://raw.githubusercontent.com/mahfuj-m/Medicine-s-Dataset/master/medicine.json
+* https://raw.githubusercontent.com/Rajtamang01/Medicine_Recommandation_System_python/main/datasets/medications.csv
+* https://raw.githubusercontent.com/Rajtamang01/Medicine_Recommandation_System_python/main/datasets/Training.csv
+* https://raw.githubusercontent.com/shivamdobhal/SmartMedicine/main/training.csv
+
+These datasets include:
+
+* Medicine composition and metadata
+* Manufacturer and drug details
+* Symptom-based mappings
+* Training signals for healthcare ML tasks
+
+---
 
 ## Repository Structure
 
@@ -48,118 +83,114 @@ Final result is a fused status with calibrated confidence.
 medguard-ai/
   ai-service/
     data/
-    scripts/
+    models/
+    pipeline/
     main.py
-    train_model.py
   backend/
+    controllers/
+    routes/
     services/
+    models/
+    middleware/
     server.js
-    model.js
+  blockchain/
+    contracts/
+    scripts/
+    hardhat.config.js
+  database/
+    docker-compose.yml
   frontend/
     app/
     components/
-  blockchain/
-  database/
-  docker-compose.yml
+    lib/
+    public/
+  README.md
 ```
 
-## Prerequisites
+---
 
-- Node.js 18+
-- Python 3.10+
-- MongoDB (local or Docker)
-- Ollama running locally (default: http://localhost:11434)
+## Tech Stack
+
+### Frontend
+
+* Next.js
+* React
+* Tailwind CSS
+* Framer Motion
+* Shadcn UI
+
+### Backend
+
+* Node.js
+* Express.js
+* Multer
+* Axios
+
+### AI Service
+
+* Python (FastAPI)
+* Tesseract OCR
+* Ollama (LLaMA 3)
+
+### Blockchain
+
+* Solidity
+* Hardhat
+
+### Database
+
+* MongoDB
+
+---
 
 ## Setup
 
-### 1) Install dependencies
-
-Root:
+Install dependencies:
 
 ```bash
 npm install
+cd backend && npm install
+cd ../frontend && npm install
+cd ../ai-service && pip install -r requirements.txt
 ```
 
-Backend:
-
-```bash
-cd backend
-npm install
-```
-
-Frontend:
-
-```bash
-cd frontend
-npm install
-```
-
-AI service:
-
-```bash
-cd ai-service
-pip install -r requirements.txt
-```
-
-### 2) Start MongoDB
+Start database:
 
 ```bash
 docker compose -f database/docker-compose.yml up -d
 ```
 
-### 3) Start services
+Run LLM:
 
-From root:
+```bash
+ollama run llama3
+```
+
+Run app:
 
 ```bash
 npm run dev
 ```
 
-This runs:
+---
 
-- Backend on port 5000
-- Frontend on port 3000
-- AI service on port 8000
+## API Endpoints
 
-## Environment Variables
+* POST `/api/verify-image` → Verify medicine image
+* GET `/api/verifications/:id` → Get verification result
+* GET `/api/admin/analytics` → Analytics
+* GET `/api/alerts` → Alerts
 
-Backend (`backend/.env`):
-
-```env
-PORT=5000
-MONGODB_URI=mongodb://127.0.0.1:27017/medguard
-OLLAMA_URL=http://localhost:11434/api/generate
-OLLAMA_MODEL=llama3
-```
-
-## Key API Endpoints
-
-- `POST /api/verify-image` -> verify uploaded medicine image
-- `GET /api/verifications/:id` -> verification + AI reasoning
-- `GET /api/admin/training-metrics` -> dynamic training pipeline metrics
-- `POST /api/admin/datasets/ingest` -> ingest GitHub/Kaggle dataset sources
-- `GET /api/alerts` -> alerts + summary
-- `GET /api/admin/analytics` -> analytics distributions
-- `GET /api/settings`, `PUT /api/settings` -> settings persistence
-
-## Dataset Ingestion
-
-Dataset ingestion script:
-
-- `ai-service/scripts/ingest-datasets.mjs`
-
-It pulls configured GitHub sources, writes Kaggle-seed records, and generates augmented records used in training telemetry.
-
-Manual ingestion trigger:
-
-```bash
-curl -X POST http://localhost:5000/api/admin/datasets/ingest
-```
+---
 
 ## Notes
 
-- If scans keep returning suspicious for clean packages, verify image quality and packaging completeness (batch/manufacturer/exp fields visible).
-- For best results, upload clear front/back packaging photos with readable text.
+* Works best with high-quality images
+* OCR accuracy depends on text clarity
+* Designed for real-time verification
+* Runs LLM locally (privacy-friendly)
+
+---
 
 ## License
 
