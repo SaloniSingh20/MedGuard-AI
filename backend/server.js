@@ -107,7 +107,9 @@ let datasetSnapshotCache = {
 };
 
 function isDatasetFile(filePath) {
-  return /\.(json|jsonl|csv|txt)$/i.test(filePath);
+  const extMatch = /\.(json|jsonl|csv|txt)$/i.test(filePath);
+  const nameMatch = path.basename(String(filePath || "")).toLowerCase() === "query";
+  return extMatch || nameMatch;
 }
 
 async function walkFiles(dir, bag = []) {
@@ -194,7 +196,17 @@ async function getDatasetSnapshot() {
 
   const filesBySource = [];
   for (const root of DATASET_DIRS) {
-    const files = await walkFiles(root, []);
+    let files = [];
+    try {
+      const stat = await fs.promises.stat(root);
+      if (stat.isDirectory()) {
+        files = await walkFiles(root, []);
+      } else if (stat.isFile() && isDatasetFile(root)) {
+        files = [root];
+      }
+    } catch {
+      files = [];
+    }
     filesBySource.push({ root, files });
   }
 
