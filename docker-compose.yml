@@ -3,39 +3,61 @@ version: '3.8'
 services:
   mongodb:
     image: mongo:6.0
+    container_name: medguard-mongodb
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
       MONGO_INITDB_DATABASE: medguard
+    restart: unless-stopped
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medguard-backend
     ports:
       - "5000:5000"
     environment:
       MONGODB_URI: mongodb://mongodb:27017/medguard
       PORT: 5000
+      FRONTEND_URL: http://localhost:3000
+      OLLAMA_URL: http://host.docker.internal:11434
+      AI_SERVICE_URL: http://ai-service:8000
+      NODE_ENV: production
     depends_on:
       - mongodb
     volumes:
       - ./backend/uploads:/app/uploads
+    restart: unless-stopped
 
   ai-service:
-    build: ./ai-service
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: medguard-ai-service
     ports:
       - "8000:8000"
     environment:
-      - PYTHONPATH=/app
+      PYTHONPATH: /app
+      OLLAMA_URL: http://host.docker.internal:11434
+    volumes:
+      - ./ai-service/data:/app/data
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medguard-frontend
     ports:
-      - "3003:3000"
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:5000
     depends_on:
       - backend
-      - ai-service
+    restart: unless-stopped
 
 volumes:
   mongodb_data:

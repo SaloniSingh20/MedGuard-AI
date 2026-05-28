@@ -1,1 +1,48 @@
-node_modules
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+
+# Environment files — keep .env.example, ignore actual secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads (temp files, auto-deleted after scan)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Large Tesseract binary (users download via npm install)
+*.traineddata
+
+# Python cache
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Hardhat build artifacts
+blockchain/cache/
+blockchain/artifacts/
+
+# IDE
+.vscode/
+.idea/
+
+# Test coverage
+coverage/

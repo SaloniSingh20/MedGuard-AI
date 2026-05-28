@@ -1,203 +1,333 @@
-const { extractTextFromImage } = require("./services/ocrService");
-const { analyzeMedicine: analyzeWithOllama } = require("./services/aiService");
+/**
+ * MedGuard AI — Core Analysis Pipeline
+ *
+ * Pipeline:
+ *   Image → OCR (Tesseract.js) → LLM (Ollama/llama3) → DB Validation → Confidence Fusion → Verdict
+ *
+ * Confidence weights:
+ *   OCR quality  15%
+ *   LLM analysis 50%
+ *   Field count  25%
+ *   DB lookup    10%
+ */
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
+const { extractTextFromImage } = require('./services/ocrService');
+const { analyzeMedicine: analyzeWithAI } = require('./services/aiService');
+const {
+  validateMedicineName,
+  validateManufacturer,
+  validateBatchNumber,
+  validateExpiryDate,
+  validateComposition,
+} = require('./data/medicineDatabase');
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-function mapAiStatus(status) {
-  const normalized = String(status || "SUSPICIOUS").toUpperCase();
-  if (normalized === "SAFE") return "authentic";
-  if (normalized === "FAKE") return "counterfeit";
-  return "suspicious";
+function mapStatus(s) {
+  const u = String(s || '').toUpperCase();
+  if (u === 'SAFE' || u === 'AUTHENTIC') return 'authentic';
+  if (u === 'FAKE' || u === 'COUNTERFEIT') return 'counterfeit';
+  return 'suspicious';
 }
 
-function extractEvidence(ocrText) {
-  const text = String(ocrText || "");
-  const lower = text.toLowerCase();
+// ─── Field Extractor ──────────────────────────────────────────────────────────
 
-  const manufacturer =
-    /(?:manufactured\s*by|mfd\s*by|marketed\s*by|manufacturer|company|pharma|laboratories|ltd|limited|pvt\.?\s*ltd\.?|inc\.?|healthcare|biotech|lifesciences)/i.test(text) ||
-    /\b(cipla|sun\s*pharma|dr\.?\s*reddy|lupin|mankind|zydus|glenmark|torrent|abbott|bayer|pfizer|novartis)\b/i.test(lower);
+function extractFields(text) {
+  const t = String(text || '');
 
-  const batchMatch =
-    text.match(/(?:batch|lot|b\.?\s*no\.?|bn)\s*[:\-]?\s*([A-Z0-9\-]{3,})/i) ||
-    text.match(/\b([A-Z]{2,5}[\-\/]?[A-Z0-9]{3,8})\b/);
-  const batch = Boolean(batchMatch?.[1]);
+  // Batch number
+  const batchRx = t.match(/(?:batch|lot|b\.?\s*no\.?|bn)\s*[:\-#\.]?\s*([A-Z0-9][A-Z0-9\-\/]{2,16})/i);
+  const batchNum = batchRx?.[1]?.toUpperCase()?.trim() || null;
 
-  const expiry =
-    /(?:exp|expiry|expires)\s*[:\-]?\s*(?:0?[1-9]|1[0-2])[\/-](?:20)?\d{2,4}/i.test(text) ||
-    /(?:0?[1-9]|1[0-2])[\/-](?:20)?\d{2,4}\s*(?:exp|expiry)/i.test(text);
+  // Expiry date
+  const expRx = t.match(/(?:exp(?:iry|iration)?|use\s*(?:before|by))\s*[:\-\.]?\s*((?:0?[1-9]|1[0-2])[\/\-](?:20)?\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*[\-,]?\s*(?:20)?\d{2,4})/i);
+  const expiryStr = expRx?.[1]?.trim() || null;
 
-  const dosage = /\b\d{1,4}\s?(mg|ml|mcg|g)\b/i.test(text) || /\b(tablet|capsule|syrup|injection)\b/i.test(lower);
+  // Manufacturer
+  const mfrRx = t.match(/(?:manufactured\s*(?:and\s*)?(?:marketed\s*)?by|marketed\s*by|mfr\.|manufacturer\s*:|company\s*:)\s*([^\n]{4,80})/i);
+  const mfrStr = mfrRx?.[1]?.trim() || null;
+
+  // Dosage
+  const dosageRx = t.match(/\b(\d{1,4}\s*(?:mg|ml|mcg|g|iu|%))\b/i);
+  const dosageStr = dosageRx?.[1]?.trim() || null;
+
+  // Composition
+  const compRx = t.match(/(?:composition|each\s+\w+\s+contains|contains)\s*[:\-]?\s*([^\n]{8,120})/i);
+  const compStr = compRx?.[1]?.trim() || null;
+
+  // Boolean presence flags (10 fields)
+  const present = {
+    medicine_name: /\b(tablet|capsule|syrup|injection|cream|ointment|drops|gel|suspension|inhaler)\b/i.test(t) || validateMedicineName(t).valid,
+    manufacturer: /\b(pharma|laboratories?|labs|healthcare|biotech|lifesciences|ltd|limited|pvt|inc|industries)\b/i.test(t),
+    batch_number: Boolean(batchNum) || /\b(batch|lot|b\.?\s*no)\b/i.test(t),
+    expiry_date: Boolean(expiryStr) || (/\b(exp|expiry)\b/i.test(t) && /\d{2}[\/\-]\d{2,4}/.test(t)),
+    mfg_date: /\b(mfg|mfd|manufacture[d]?\s*(?:date)?|date\s*of\s*manufacture)\b/i.test(t),
+    dosage: Boolean(dosageStr),
+    composition: /\b(composition|contains|active\s*ingredient|each\s+\w+\s+contains)\b/i.test(t),
+    storage: /\b(store|storage|keep\s+(?:in|at|below)|protect\s+from)\b/i.test(t),
+    regulatory: /\b(ip\b|b\.?p\.?\b|u\.?s\.?p\.?\b|schedule\s*[hgx]|rx\s*only|prescription\s*only)\b/i.test(t),
+    country_origin: /\b(india|germany|usa|uk|france|switzerland|country\s*of\s*origin|made\s*in)\b/i.test(t),
+  };
+
+  const fieldCount = Object.values(present).filter(Boolean).length;
+
+  // Database validations
+  const mfrValidation = validateManufacturer(mfrStr || t);
+  const batchValidation = validateBatchNumber(batchNum || '');
+  const expiryValidation = validateExpiryDate(expiryStr || t);
+  const compValidation = validateComposition(compStr || t);
+  const medValidation = validateMedicineName(t);
+
+  // Red flags
+  const redFlags = [];
+
+  const years = [...t.matchAll(/\b(20\d{2})\b/g)].map(m => parseInt(m[1]));
+  const now = new Date();
+  if (years.length >= 2) {
+    const span = Math.max(...years) - Math.min(...years);
+    if (span > 10) redFlags.push('Implausible date span on packaging (>10 years)');
+  }
+  if (years.some(y => y < 2005)) redFlags.push('Suspected pre-2005 manufacture date');
+  if (years.some(y => y > now.getFullYear() + 10)) redFlags.push('Suspicious far-future date');
+  if (expiryValidation.expired) redFlags.push('Product appears to be past its expiry date');
+  if (batchValidation.suspicious) redFlags.push('Batch number matches known fake pattern');
+  if (/\b(copy|duplicate|repackaged|not\s*for\s*retail|sample\s*only|not\s*for\s*sale)\b/i.test(t)) {
+    redFlags.push('Suspicious packaging disclaimer');
+  }
+  if (/\b(guarant[a-z]+|certif[a-z]+\s*original|100%\s*genuine|verified\s*original)\b/i.test(t) &&
+      !mfrValidation.valid) {
+    redFlags.push('Unverified authenticity claim from unknown manufacturer');
+  }
 
   return {
-    manufacturer,
-    batch,
-    expiry,
-    dosage,
-    signalScore: [manufacturer, batch, expiry, dosage].filter(Boolean).length,
-    extractedBatch: batchMatch?.[1] || null,
+    present,
+    fieldCount,
+    batchNum,
+    expiryStr,
+    mfrStr,
+    dosageStr,
+    compStr,
+    mfrValidation,
+    batchValidation,
+    expiryValidation,
+    compValidation,
+    medValidation,
+    redFlags,
   };
 }
 
-function hasSevereCounterfeitSignal(reason, issues) {
-  const source = [String(reason || ""), ...(Array.isArray(issues) ? issues : [])].join(" ").toLowerCase();
-  return /(forged|tamper|tampered|blacklist|invalid\s*qr|counterfeit\s*network|duplicate\s*batch|packaging\s*cloned)/.test(
-    source
+// ─── Confidence Fusion Engine ─────────────────────────────────────────────────
+// Weights: OCR 15% | LLM 50% | Field Presence 25% | DB Validation 10%
+
+function fuseConfidence(aiResult, fields, ocrConfidence, ocrMethod) {
+  const aiConf = clamp(Number(aiResult.confidence) || 50, 0, 100);
+
+  // OCR weight: reduce weight when OCR gave no pharma signals (garbage extraction)
+  const isGarbageOcr = ocrMethod === 'tesseract-nonpharma' || (ocrConfidence < 20 && fields.fieldCount === 0);
+  const effectiveOcrScore = isGarbageOcr ? Math.min(ocrConfidence, 15) : clamp(ocrConfidence, 0, 100);
+
+  // Field completeness score (0-100)
+  const fieldScore = clamp(Math.round((fields.fieldCount / 10) * 100), 0, 100);
+
+  // Database validation score (0-100)
+  const dbScore = clamp(Math.round(
+    fields.mfrValidation.score * 0.35 +
+    fields.batchValidation.score * 0.25 +
+    (fields.expiryValidation.valid ? (fields.expiryValidation.expired ? 40 : 100) : 0) * 0.25 +
+    fields.compValidation.score * 0.15
+  ), 0, 100);
+
+  // Fused score — when OCR is garbage, AI + fields carry the weight
+  const ocrWeight = isGarbageOcr ? 0.05 : 0.15;
+  const aiWeight = isGarbageOcr ? 0.60 : 0.50;
+  const fieldWeight = 0.25;
+  const dbWeight = isGarbageOcr ? 0.10 : 0.10;
+
+  let fused = Math.round(
+    effectiveOcrScore * ocrWeight +
+    aiConf * aiWeight +
+    fieldScore * fieldWeight +
+    dbScore * dbWeight
   );
+
+  // Adjustments
+  fused -= fields.redFlags.length * 7;
+  if (fields.mfrValidation.score >= 90) fused += 4;
+  if (fields.compValidation.pharmaRef) fused += 3;
+  if (fields.expiryValidation.expired) fused -= 12;
+  if (fields.medValidation.score >= 80) fused += 3;
+
+  return clamp(Math.round(fused), 5, 98);
 }
 
-function evaluateBlockchainSignal(evidence) {
-  const token = String(evidence?.extractedBatch || "").toUpperCase().trim();
-  const hasLetters = /[A-Z]/.test(token);
-  const hasDigits = /\d/.test(token);
-  const hasDelimiter = /[-/]/.test(token);
-  const plausibleLength = token.length >= 6 && token.length <= 14;
-  const repeatedPattern = /^(.)\1+$/.test(token) || /(0000|1111|XXXX|AAAA|BBBB|ZZZZ)/.test(token);
+// ─── Verdict Logic ────────────────────────────────────────────────────────────
 
-  let trust = 0;
-  if (evidence?.manufacturer) trust += 28;
-  if (evidence?.expiry) trust += 22;
-  if (plausibleLength) trust += 16;
-  if (hasLetters && hasDigits) trust += 20;
-  if (hasDelimiter) trust += 8;
-  if (repeatedPattern) trust -= 26;
-  if (!token) trust = 0;
+function determineVerdict(aiResult, fields, fusedScore) {
+  const aiStatus = mapStatus(aiResult.status);
+  const hasSevereFlag = aiResult.detected_issues?.some(i =>
+    /forged|tamper|blacklist|counterfeit.network|duplicate.batch|packaging.clone/i.test(i)
+  ) || false;
 
-  const clampedTrust = clamp(Math.round(trust), 0, 100);
-  const risk = clamp(100 - clampedTrust, 0, 100);
+  const corePresent = fields.present.batch_number && fields.present.expiry_date && fields.present.manufacturer;
+  const strongEvidence = fields.fieldCount >= 6;
+  const weakEvidence = fields.fieldCount <= 2;
+  const manyRedFlags = fields.redFlags.length >= 2;
 
-  return {
-    trust: clampedTrust,
-    risk,
-    onChainMatch: clampedTrust >= 65,
-  };
+  let status = aiStatus;
+
+  // Override rules — evidence beats AI opinion
+
+  // COUNTERFEIT upgrades
+  if (hasSevereFlag && fusedScore >= 60) {
+    status = 'counterfeit';
+  }
+  if (manyRedFlags && weakEvidence) {
+    status = 'counterfeit';
+  }
+  if (fields.batchValidation.suspicious) {
+    status = status === 'authentic' ? 'suspicious' : status;
+  }
+  if (fields.expiryValidation.expired && status === 'authentic') {
+    status = 'suspicious';
+  }
+
+  // Pull back from COUNTERFEIT when evidence is solid
+  if (status === 'counterfeit' && strongEvidence && !hasSevereFlag && fields.redFlags.length === 0) {
+    status = 'suspicious';
+  }
+
+  // AUTHENTIC requires proof
+  if (status === 'authentic' && !strongEvidence) {
+    status = 'suspicious';
+  }
+  if (status === 'authentic' && !corePresent) {
+    status = 'suspicious';
+  }
+
+  // Promote to AUTHENTIC when evidence is overwhelming
+  if (strongEvidence && corePresent && fields.redFlags.length === 0 && fusedScore >= 68 && !hasSevereFlag) {
+    if (fields.mfrValidation.valid || fields.compValidation.pharmaRef) {
+      status = 'authentic';
+    }
+  }
+
+  // Ensure score makes sense for each verdict — no hard floors that make every result identical
+  let finalScore = fusedScore;
+  if (status === 'counterfeit') finalScore = clamp(finalScore, 62, 98);
+  if (status === 'authentic') finalScore = clamp(finalScore, 65, 98);
+  // suspicious: let the score float freely so different inputs give different results
+
+  return { status, score: clamp(finalScore, 5, 98) };
 }
 
-function applyStrictAuthenticGate(aiResult, evidence) {
-  const initialStatus = mapAiStatus(aiResult.status);
-  const initialConfidence = Number.isFinite(Number(aiResult.confidence))
-    ? clamp(Math.round(Number(aiResult.confidence)), 0, 100)
-    : 50;
-  const severe = hasSevereCounterfeitSignal(aiResult.reason, aiResult.detected_issues);
-  const issueCount = Array.isArray(aiResult.detected_issues) ? aiResult.detected_issues.length : 0;
-  const blockchain = evaluateBlockchainSignal(evidence);
-
-  let finalStatus = initialStatus;
-  let finalScore = initialConfidence;
-
-  const coreFieldCount = [evidence.manufacturer, evidence.batch, evidence.expiry].filter(Boolean).length;
-  const hasAllCoreFields = coreFieldCount === 3;
-  const strongAuthenticEvidence = coreFieldCount >= 2 && (Boolean(evidence.dosage) || blockchain.trust >= 58);
-  const weakEvidence = evidence.signalScore <= 1;
-
-  // Guardrail for authentic: require strong core evidence, but avoid over-penalizing minor OCR misses.
-  if (finalStatus === "authentic" && (!strongAuthenticEvidence || finalScore < 72)) {
-    finalStatus = "suspicious";
-    finalScore = Math.min(Math.max(finalScore, 58), 78);
-  }
-
-  // Evidence-first promotion for clearly complete, clean packs.
-  if (strongAuthenticEvidence && evidence.signalScore >= 3 && !severe && issueCount <= 1 && finalScore >= 64) {
-    finalStatus = "authentic";
-    finalScore = Math.max(finalScore, Math.round((76 + blockchain.trust * 0.18)));
-  }
-
-  if (finalStatus === "suspicious" && hasAllCoreFields && evidence.signalScore >= 3 && finalScore >= 74 && !severe && issueCount <= 2) {
-    finalStatus = "authentic";
-    finalScore = Math.max(finalScore, Math.round((78 + blockchain.trust * 0.12)));
-  }
-
-  if (
-    (severe && finalScore >= 68) ||
-    (initialStatus === "counterfeit" && finalScore >= 72 && (blockchain.risk >= 76 || issueCount >= 3 || weakEvidence)) ||
-    (weakEvidence && issueCount >= 3 && finalScore >= 55) ||
-    (blockchain.risk >= 75 && issueCount >= 2 && finalScore >= 52)
-  ) {
-    finalStatus = "counterfeit";
-    finalScore = Math.max(finalScore, Math.round(80 + blockchain.risk * 0.12));
-  }
-
-  // Pull overly harsh counterfeit predictions back when evidence quality is decent.
-  if (finalStatus === "counterfeit" && strongAuthenticEvidence && !severe && issueCount <= 1 && blockchain.risk < 70) {
-    finalStatus = "suspicious";
-    finalScore = Math.min(finalScore, 79);
-  }
-
-  if (finalStatus === "counterfeit" && !severe && evidence.signalScore >= 3 && issueCount < 2) {
-    finalStatus = "suspicious";
-    finalScore = Math.min(finalScore, 80);
-  }
-
-  // Promote borderline clean packs to authentic when all core fields are present.
-  if (finalStatus === "suspicious" && hasAllCoreFields && evidence.signalScore === 4 && finalScore >= 70 && !severe && issueCount <= 1) {
-    finalStatus = "authentic";
-    finalScore = Math.max(finalScore, Math.round((76 + blockchain.trust * 0.15)));
-  }
-
-  // Final balancing: complete evidence with no strong risk should not remain suspicious.
-  if (finalStatus === "suspicious" && strongAuthenticEvidence && !severe && issueCount <= 1 && finalScore >= 60) {
-    finalStatus = "authentic";
-    finalScore = Math.max(finalScore, Math.round((74 + blockchain.trust * 0.14)));
-  }
-
-  // Positive lift: if evidence is mostly complete and blockchain trust is decent, avoid excessive negative bias.
-  if (finalStatus === "suspicious" && evidence.signalScore >= 3 && blockchain.trust >= 58 && !severe && issueCount <= 2 && finalScore >= 58) {
-    finalStatus = "authentic";
-    finalScore = Math.max(finalScore, 72);
-  }
-
-  if (finalStatus === "suspicious" && blockchain.risk >= 82 && (severe || issueCount >= 2)) {
-    finalStatus = "counterfeit";
-    finalScore = Math.max(finalScore, 84);
-  }
-
-  return {
-    status: finalStatus,
-    score: clamp(finalScore, 0, 100),
-    evidence: {
-      ...evidence,
-      blockchain,
-    },
-  };
-}
-
-function statusToPrediction(status) {
-  if (status === "authentic") return "SAFE";
-  if (status === "counterfeit") return "FAKE";
-  return "SUSPICIOUS";
-}
+// ─── Main Export ──────────────────────────────────────────────────────────────
 
 module.exports = async function analyzeMedicine(imagePath, options = {}) {
-  const extractedText = await extractTextFromImage(imagePath);
-  const aiResult = await analyzeWithOllama(extractedText);
-  const evidence = extractEvidence(extractedText);
-  const gated = applyStrictAuthenticGate(aiResult, evidence);
+  // Step 1: OCR
+  const ocrResult = await extractTextFromImage(imagePath);
+  const extractedText = typeof ocrResult === 'object' ? (ocrResult.text || '') : String(ocrResult || '');
+  const ocrConfidence = typeof ocrResult === 'object' ? (ocrResult.confidence ?? 50) : 50;
+  const ocrMethod = typeof ocrResult === 'object' ? (ocrResult.method || 'unknown') : 'legacy';
 
-  const confidence = clamp(gated.score / 100, 0, 1);
+  console.log(`[Pipeline] OCR=${ocrMethod}, conf=${ocrConfidence}%, chars=${extractedText.length}`);
+
+  // When OCR completely failed, return an honest "unreadable" result rather than
+  // running full analysis on demo text (which would give falsely high scores).
+  if (ocrMethod === 'demo-fallback') {
+    const score = 32;
+    return {
+      result: 'SUSPICIOUS',
+      status: 'suspicious',
+      confidence: score / 100,
+      authenticity_score: score,
+      batch_number: options.batchNumber || null,
+      extracted_text: '',
+      ai_result: {
+        status: 'SUSPICIOUS',
+        confidence: score,
+        reason: 'OCR could not extract readable pharmaceutical text from this image. ' +
+          'Please upload a well-lit, in-focus photograph of the medicine label.',
+        detected_issues: [
+          'No readable text extracted from image',
+          'Ensure medicine label is fully visible and well-lit',
+          'Try a closer shot — label text must fill the frame',
+        ],
+        fields_found: {},
+        evidence: { fieldCount: 0, ocrMethod, ocrConfidence: 0, redFlags: [] },
+      },
+      diagnostics: { ocrMethod, ocrConfidence: 0, fieldCount: 0, fusedScore: score, finalScore: score, redFlags: [], aiProvider: 'rule-based', aiModel: 'none', medicine_name: options.medicineName || 'Unknown' },
+    };
+  }
+
+  // Step 2: AI Analysis (Ollama + fallback)
+  const aiResult = await analyzeWithAI(extractedText);
+
+  // Step 3: Field Extraction + DB Validation
+  const fields = extractFields(extractedText);
+
+  // Step 4: Confidence Fusion
+  const fusedScore = fuseConfidence(aiResult, fields, ocrConfidence, ocrMethod);
+
+  // Step 5: Verdict
+  const { status, score } = determineVerdict(aiResult, fields, fusedScore);
+
+  const confidence = clamp(score / 100, 0, 1);
+  const batchNumber = options.batchNumber || fields.batchNum || null;
+
+  // Merge AI issues + red flags
+  const allIssues = [...(aiResult.detected_issues || []), ...fields.redFlags]
+    .filter((v, i, a) => v && a.indexOf(v) === i)
+    .slice(0, 10);
 
   return {
-    result: statusToPrediction(gated.status),
-    status: gated.status,
+    result: status === 'authentic' ? 'SAFE' : status === 'counterfeit' ? 'FAKE' : 'SUSPICIOUS',
+    status,
     confidence,
-    authenticity_score: gated.score,
-    batch_number: options.batchNumber || evidence.extractedBatch || null,
+    authenticity_score: score,
+    batch_number: batchNumber,
     extracted_text: extractedText,
     ai_result: {
-      status: statusToPrediction(gated.status),
-      confidence: gated.score,
+      status: status === 'authentic' ? 'SAFE' : status === 'counterfeit' ? 'FAKE' : 'SUSPICIOUS',
+      confidence: score,
       reason: aiResult.reason,
-      detected_issues: aiResult.detected_issues || [],
-      evidence: gated.evidence,
+      detected_issues: allIssues,
+      fields_found: aiResult.fields_found || fields.present,
+      evidence: {
+        fieldCount: fields.fieldCount,
+        fieldsPresent: fields.present,
+        extractedBatch: fields.batchNum,
+        extractedExpiry: fields.expiryStr,
+        extractedManufacturer: fields.mfrStr,
+        extractedDosage: fields.dosageStr,
+        redFlags: fields.redFlags,
+        mfrValidation: fields.mfrValidation,
+        batchValidation: fields.batchValidation,
+        expiryValidation: fields.expiryValidation,
+        ocrMethod,
+        ocrConfidence,
+      },
     },
     diagnostics: {
-      provider: "ollama",
-      model: process.env.OLLAMA_MODEL || "llama3",
-      reason: aiResult.reason,
-      detected_issues: aiResult.detected_issues || [],
-      evidence: gated.evidence,
-      medicine_name: options.medicineName || "Unknown Medicine",
+      ocrMethod,
+      ocrConfidence,
+      fieldCount: fields.fieldCount,
+      fusedScore,
+      finalScore: score,
+      redFlags: fields.redFlags,
+      aiProvider: 'ollama',
+      aiModel: process.env.OLLAMA_MODEL || 'llama3',
+      dbValidation: {
+        manufacturer: fields.mfrValidation,
+        batch: fields.batchValidation,
+        expiry: fields.expiryValidation,
+        composition: fields.compValidation,
+        medicine: fields.medValidation,
+      },
+      medicine_name: options.medicineName || 'Unknown',
     },
   };
 };
