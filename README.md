@@ -4,28 +4,6 @@
 
 ---
 
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Tech Stack](#tech-stack)
-4. [Analysis Pipeline](#analysis-pipeline)
-5. [Confidence Fusion Engine](#confidence-fusion-engine)
-6. [Pharmaceutical Database](#pharmaceutical-database)
-7. [Project Structure](#project-structure)
-8. [Prerequisites](#prerequisites)
-9. [Installation & Setup](#installation--setup)
-10. [Running Locally](#running-locally)
-11. [API Reference](#api-reference)
-12. [Classification Logic](#classification-logic)
-13. [Blockchain Integration](#blockchain-integration)
-14. [AI Service (Python)](#ai-service-python)
-15. [Environment Variables](#environment-variables)
-16. [Troubleshooting](#troubleshooting)
-17. [Contributing](#contributing)
-
----
-
 ## Overview
 
 Counterfeit medicines cause an estimated **1 million deaths per year** globally (WHO). MedGuard AI addresses this by providing a consumer-facing tool that:
