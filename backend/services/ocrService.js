@@ -20,16 +20,8 @@ async function extractTextFromImage(imagePath) {
   }
 
   if (createWorker) {
-    // Try two PSM modes and pick the better result
-    const [r3, r6] = await Promise.all([
-      runTesseract(imagePath, 3),  // PSM 3: Fully automatic
-      runTesseract(imagePath, 6),  // PSM 6: Single uniform block
-    ]);
-
-    // Pick best result: prefer higher confidence, break ties by length
-    const best = (r3.confidence > r6.confidence) ? r3
-      : (r6.confidence > r3.confidence) ? r6
-      : (r3.text.length >= r6.text.length ? r3 : r6);
+    // Single PSM 6 pass (uniform block) — best for medicine labels, 2× faster than dual-pass
+    const best = await runTesseract(imagePath, 6);
 
     const cleaned = cleanOcrText(best.text);
     const hasPharmText = hasPharmaSignals(cleaned);

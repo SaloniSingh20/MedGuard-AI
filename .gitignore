@@ -27,8 +27,9 @@ Thumbs.db
 backend/uploads/*
 !backend/uploads/.gitkeep
 
-# Large Tesseract binary (users download via npm install)
+# Tesseract language data — commit eng.traineddata so cloud deploys work without download
 *.traineddata
+!backend/eng.traineddata
 
 # Python cache
 __pycache__/
