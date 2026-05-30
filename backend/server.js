@@ -19,8 +19,22 @@ let helmet = null;
 try { helmet = require('helmet'); } catch {}
 if (helmet) app.use(helmet());
 
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_URL || 'http://localhost:3000',
+  'http://localhost:3000',
+  'https://frontend-one-henna-87.vercel.app',
+  /\.vercel\.app$/,
+  /\.loca\.lt$/,
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin / server-to-server
+    const ok = ALLOWED_ORIGINS.some(o =>
+      typeof o === 'string' ? o === origin : o.test(origin)
+    );
+    cb(ok ? null : new Error('CORS: origin not allowed'), ok);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
