@@ -235,35 +235,7 @@ module.exports = async function analyzeMedicine(imagePath, options = {}) {
 
   console.log(`[Pipeline] OCR=${ocrMethod}, conf=${ocrConfidence}%, chars=${extractedText.length}`);
 
-  // When OCR completely failed, return an honest "unreadable" result rather than
-  // running full analysis on demo text (which would give falsely high scores).
-  if (ocrMethod === 'demo-fallback') {
-    const score = 32;
-    return {
-      result: 'SUSPICIOUS',
-      status: 'suspicious',
-      confidence: score / 100,
-      authenticity_score: score,
-      batch_number: options.batchNumber || null,
-      extracted_text: '',
-      ai_result: {
-        status: 'SUSPICIOUS',
-        confidence: score,
-        reason: 'OCR could not extract readable pharmaceutical text from this image. ' +
-          'Please upload a well-lit, in-focus photograph of the medicine label.',
-        detected_issues: [
-          'No readable text extracted from image',
-          'Ensure medicine label is fully visible and well-lit',
-          'Try a closer shot — label text must fill the frame',
-        ],
-        fields_found: {},
-        evidence: { fieldCount: 0, ocrMethod, ocrConfidence: 0, redFlags: [] },
-      },
-      diagnostics: { ocrMethod, ocrConfidence: 0, fieldCount: 0, fusedScore: score, finalScore: score, redFlags: [], aiProvider: 'rule-based', aiModel: 'none', medicine_name: options.medicineName || 'Unknown' },
-    };
-  }
-
-  // Step 2: AI Analysis (Ollama + fallback)
+  // Step 2: AI Analysis (Ollama + rule-based fallback)
   const aiResult = await analyzeWithAI(extractedText);
 
   // Step 3: Field Extraction + DB Validation
